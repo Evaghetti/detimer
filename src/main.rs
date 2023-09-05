@@ -1,7 +1,10 @@
-use std::{io::Write, time::Instant};
+use std::{
+    fs::File,
+    io::{Error, Write},
+    time::Instant,
+};
 
 use clap::Parser;
-use clio::Output;
 
 struct Timer {
     seconds: i32,
@@ -30,8 +33,8 @@ struct TimerConfig {
     )]
     time_minutes: Option<i32>,
     /// Pra onde escrever (por padrão stdout)
-    #[clap(long, short, value_parser, default_value = "-")]
-    output: Output,
+    #[arg(short = 'o', long = "output")]
+    output: Option<String>,
 }
 
 impl TimerConfig {
@@ -53,14 +56,24 @@ impl TimerConfig {
             Err("Tem que me dizer um time maninho")
         }
     }
+
+    fn write(&self, content: &str) -> Result<(), Error> {
+        let mut writer: Box<dyn Write> = if let Some(path) = self.output.as_ref() {
+            Box::new(File::create(path)?)
+        } else {
+            Box::new(std::io::stdout())
+        };
+
+        writeln!(writer, "{}", content)?;
+
+        Ok(())
+    }
 }
 
-fn run_timer(out: &mut impl Write, mut timer: Timer) -> Result<(), &'static str> {
+fn run_timer(out: TimerConfig, mut timer: Timer) -> Result<(), Error> {
     let mut last_time = Instant::now();
 
-    if let Err(_) = writeln!(*out, "{:0>2}:{:0>2}", timer.minutes, timer.seconds) {
-        return Err("Nao foi possivel escrever conteudo no caminho desejado");
-    }
+    out.write(format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str())?;
 
     loop {
         let now = Instant::now();
@@ -79,18 +92,18 @@ fn run_timer(out: &mut impl Write, mut timer: Timer) -> Result<(), &'static str>
                 }
             }
 
-            if let Err(_) = writeln!(*out, "{:0>2}:{:0>2}", timer.minutes, timer.seconds) {
-                return Err("Nao foi possivel escrever conteudo no caminho desejado");
-            }
+            out.write(format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str())?;
             last_time = now;
         }
     }
 }
 
 fn main() -> Result<(), &'static str> {
-    let mut config = TimerConfig::parse();
+    let config = TimerConfig::parse();
     let timer = config.get_time()?;
-    let mut output = config.output.lock();
 
-    run_timer(&mut output, timer)
+    match run_timer(config, timer) {
+        Ok(_) => Ok(()),
+        Err(_) => Err("Erro ao escrever em arquivo"),
+    }
 }

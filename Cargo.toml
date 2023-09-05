@@ -7,4 +7,3 @@ edition = "2021"
 
 [dependencies]
 clap = { version = "4.4.2", features = ["derive"] }
-clio = { version = "0.3.4", features = ["clap", "clap-parse"] }
