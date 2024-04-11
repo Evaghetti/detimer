@@ -15,10 +15,16 @@ struct Timer {
 struct TimerNotifySound {
     sink: Sink,
     _stream: OutputStream,
+    path: String,
 }
 
 impl TimerNotifySound {
-    fn new(path: &str) -> Result<Self, &'static str> {
+    fn load(path: &str) -> Result<(Sink, OutputStream), &'static str> {
+        let (_stream, stream_handle) = if let Ok(args) = OutputStream::try_default() {
+            args
+        } else {
+            return Err("Erro ao criar canal de áudio");
+        };
         let source = if let Ok(file) = File::open(path) {
             if let Ok(final_decoder) = Decoder::new(file) {
                 final_decoder
@@ -29,28 +35,32 @@ impl TimerNotifySound {
             return Err("Erro abrindo arquivo de som");
         };
 
-        let (_stream, stream_handle) = if let Ok(args) = OutputStream::try_default() {
-            args
-        } else {
-            return Err("Erro ao criar canal de áudio");
-        };
-
         let sink = if let Ok(sink) = Sink::try_new(&stream_handle) {
             sink
         } else {
             return Err("Erro ao inicializar player");
         };
 
-        let sink = sink;
         sink.append(source);
         sink.pause();
-
-        Ok(Self { sink, _stream })
+        Ok((sink, _stream))
     }
 
-    fn play(&self) {
+    fn new(path: &str) -> Result<Self, &'static str> {
+        let (sink, _stream) = Self::load(path)?;
+
+        Ok(Self {
+            sink,
+            _stream,
+            path: path.to_string(),
+        })
+    }
+
+    fn play(&self) -> Result<Self, &'static str> {
         self.sink.play();
         self.sink.sleep_until_end();
+
+        Self::new(&self.path)
     }
 }
 
@@ -61,7 +71,6 @@ struct TimerConfig {
     #[arg(
         short = 's',
         long = "segundos",
-        group = "timer_seconds",
         conflicts_with = "time_minutes",
         required = true
     )]
@@ -70,7 +79,6 @@ struct TimerConfig {
     #[arg(
         short = 'm',
         long = "minutos",
-        group = "timer_minutes",
         conflicts_with = "time_seconds",
         required = true
     )]
@@ -82,6 +90,30 @@ struct TimerConfig {
     /// Áudio que irá tocar ao terminar o timer programado
     #[arg(short = 'n', long = "notify-sound")]
     notify_sound: Option<String>,
+
+    /// Quantas sprints serão feitas
+    #[arg(short = 'p', long = "sprint", requires = "interval_time")]
+    sprint_count: Option<u32>,
+
+    /// Tempo que dura o intervalo entre sprints
+    #[arg(short = 'i', long = "interval-time", requires = "sprint_count")]
+    interval_time: Option<u32>,
+
+    /// Onde informar se timer atual é sprint ou intervalo
+    #[arg(short = 'P', long = "out-interval", requires = "interval_time")]
+    out_interval: Option<String>,
+}
+
+fn write(out: Option<&str>, content: &str) -> Result<(), Error> {
+    let mut writer: Box<dyn Write> = if let Some(ref path) = out {
+        Box::new(File::create(path)?)
+    } else {
+        Box::new(std::io::stdout())
+    };
+
+    writeln!(writer, "{}", content)?;
+
+    Ok(())
 }
 
 impl TimerConfig {
@@ -104,22 +136,26 @@ impl TimerConfig {
         }
     }
 
-    fn write(&self, content: &str) -> Result<(), Error> {
-        let mut writer: Box<dyn Write> = if let Some(path) = self.out.as_ref() {
-            Box::new(File::create(path)?)
+    fn get_time_interval(&mut self) -> Option<Timer> {
+        if let Some(current_sprint) = self.sprint_count {
+            self.sprint_count = current_sprint.checked_sub(1);
+            println!("{:?}", self.sprint_count);
+            Some(Timer {
+                seconds: self.interval_time.unwrap() as i32,
+                minutes: 0,
+            })
         } else {
-            Box::new(std::io::stdout())
-        };
-
-        writeln!(writer, "{}", content)?;
-
-        Ok(())
+            None
+        }
     }
 
     fn run_timer(&self, mut timer: Timer) -> Result<(), Error> {
         let mut last_time = Instant::now();
 
-        self.write(format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str())?;
+        write(
+            self.out.as_deref(),
+            format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str(),
+        )?;
 
         loop {
             let now = Instant::now();
@@ -138,29 +174,52 @@ impl TimerConfig {
                     }
                 }
 
-                self.write(format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str())?;
+                write(
+                    self.out.as_deref(),
+                    format!("{:0>2}:{:0>2}", timer.minutes, timer.seconds).as_str(),
+                )?;
                 last_time = now;
             }
         }
     }
 }
 
+fn run_timer(
+    config: &TimerConfig,
+    sound: Option<&mut TimerNotifySound>,
+    timer: Timer,
+) -> Result<(), &'static str> {
+    match config.run_timer(timer) {
+        Ok(_) => {
+            if let Some(sound) = sound {
+                *sound = sound.play()?;
+            }
+            Ok(())
+        }
+        Err(_) => Err("Erro ao escrever em arquivo"),
+    }
+}
+
 fn main() -> Result<(), &'static str> {
-    let config = TimerConfig::parse();
-    let timer = config.get_time()?;
-    let sound = if let Some(ref path) = config.notify_sound {
+    let mut config = TimerConfig::parse();
+    let mut sound = if let Some(ref path) = config.notify_sound {
         Some(TimerNotifySound::new(path)?)
     } else {
         None
     };
 
-    match config.run_timer(timer) {
-        Ok(_) => {
-            if let Some(sound) = sound {
-                sound.play();
-            }
-            Ok(())
+    if config.sprint_count.is_none() {
+        run_timer(&config, sound.as_mut(), config.get_time()?)
+    } else {
+        config.sprint_count = config.sprint_count.unwrap().checked_sub(1);
+        while let Some(time_interval) = config.get_time_interval() {
+            let timer = config.get_time()?;
+            write(config.out_interval.as_deref(), "Sprint").expect("Erro escrevendo para output");
+            run_timer(&config, sound.as_mut(), timer)?;
+            write(config.out_interval.as_deref(), "Intervalo")
+                .expect("Erro escrevendo para output");
+            run_timer(&config, sound.as_mut(), time_interval)?
         }
-        Err(_) => Err("Erro ao escrever em arquivo"),
+        Ok(())
     }
 }
