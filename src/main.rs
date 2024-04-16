@@ -139,10 +139,9 @@ impl TimerConfig {
     fn get_time_interval(&mut self) -> Option<Timer> {
         if let Some(current_sprint) = self.sprint_count {
             self.sprint_count = current_sprint.checked_sub(1);
-            println!("{:?}", self.sprint_count);
             Some(Timer {
-                seconds: self.interval_time.unwrap() as i32,
-                minutes: 0,
+                seconds: 0,
+                minutes: self.interval_time.unwrap() as i32,
             })
         } else {
             None
@@ -211,14 +210,29 @@ fn main() -> Result<(), &'static str> {
     if config.sprint_count.is_none() {
         run_timer(&config, sound.as_mut(), config.get_time()?)
     } else {
-        config.sprint_count = config.sprint_count.unwrap().checked_sub(1);
+        let mut current_sprint = 1;
+        let max_sprint = config.sprint_count.unwrap();
+
+        config.sprint_count = max_sprint.checked_sub(1);
         while let Some(time_interval) = config.get_time_interval() {
             let timer = config.get_time()?;
-            write(config.out_interval.as_deref(), "Sprint").expect("Erro escrevendo para output");
+            write(
+                config.out_interval.as_deref(),
+                &format!("Sprint {}/{}", current_sprint, max_sprint),
+            )
+            .expect("Erro escrevendo para output");
             run_timer(&config, sound.as_mut(), timer)?;
-            write(config.out_interval.as_deref(), "Intervalo")
-                .expect("Erro escrevendo para output");
-            run_timer(&config, sound.as_mut(), time_interval)?
+            if current_sprint == max_sprint {
+                break;
+            }
+            write(
+                config.out_interval.as_deref(),
+                &format!("Intervalo {}/{}", current_sprint, max_sprint),
+            )
+            .expect("Erro escrevendo para output");
+            run_timer(&config, sound.as_mut(), time_interval)?;
+
+            current_sprint += 1;
         }
         Ok(())
     }
