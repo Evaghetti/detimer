@@ -12,6 +12,12 @@ struct Timer {
     minutes: i32,
 }
 
+impl Timer {
+    fn is_zero(&self) -> bool {
+        self.seconds == 0 && self.minutes == 0
+    }
+}
+
 struct TimerNotifySound {
     sink: Sink,
     _stream: OutputStream,
@@ -96,11 +102,16 @@ struct TimerConfig {
     sprint_count: Option<u32>,
 
     /// Tempo que dura o intervalo entre sprints
-    #[arg(short = 'i', long = "interval-time", requires = "sprint_count")]
+    #[arg(
+        short = 'i',
+        long = "interval-time",
+        requires = "out_interval",
+        requires = "sprint_count"
+    )]
     interval_time: Option<u32>,
 
     /// Onde informar se timer atual é sprint ou intervalo
-    #[arg(short = 'P', long = "out-interval", requires = "interval_time")]
+    #[arg(short = 'P', long = "out-interval")]
     out_interval: Option<String>,
 }
 
@@ -136,15 +147,24 @@ impl TimerConfig {
         }
     }
 
-    fn get_time_interval(&mut self) -> Option<Timer> {
+    fn get_time_interval(&mut self) -> Timer {
         if let Some(current_sprint) = self.sprint_count {
             self.sprint_count = current_sprint.checked_sub(1);
-            Some(Timer {
-                seconds: 0,
-                minutes: self.interval_time.unwrap() as i32,
-            })
-        } else {
-            None
+        }
+
+        Timer {
+            seconds: self.interval_time.unwrap_or_else(|| {
+                println!("Quanto tempo de intervalo?");
+                let mut inputted_data = String::new();
+                std::io::stdin()
+                    .read_line(&mut inputted_data)
+                    .expect("Não foi possível ler de stdin");
+                inputted_data
+                    .trim()
+                    .parse()
+                    .expect("Não foi possível parsear numero digitado")
+            }) as i32,
+            minutes: 0,
         }
     }
 
@@ -207,33 +227,63 @@ fn main() -> Result<(), &'static str> {
         None
     };
 
-    if config.sprint_count.is_none() {
+    if config.out_interval.is_none() {
         run_timer(&config, sound.as_mut(), config.get_time()?)
     } else {
         let mut current_sprint = 1;
-        let max_sprint = config.sprint_count.unwrap();
+        if let Some(max_sprint) = config.sprint_count {
+            config.sprint_count = max_sprint.checked_sub(1);
 
-        config.sprint_count = max_sprint.checked_sub(1);
-        while let Some(time_interval) = config.get_time_interval() {
-            let timer = config.get_time()?;
-            write(
-                config.out_interval.as_deref(),
-                &format!("Sprint {}/{}", current_sprint, max_sprint),
-            )
-            .expect("Erro escrevendo para output");
-            run_timer(&config, sound.as_mut(), timer)?;
-            if current_sprint == max_sprint {
-                break;
+            loop {
+                let timer = config.get_time()?;
+                write(
+                    config.out_interval.as_deref(),
+                    &format!("Sprint {}/{}", current_sprint, max_sprint),
+                )
+                .expect("Erro escrevendo para output");
+                run_timer(&config, sound.as_mut(), timer)?;
+                if current_sprint == max_sprint {
+                    break;
+                }
+
+                let time_interval = config.get_time_interval();
+                if time_interval.is_zero() {
+                    break;
+                }
+                write(
+                    config.out_interval.as_deref(),
+                    &format!("Intervalo {}/{}", current_sprint, max_sprint),
+                )
+                .expect("Erro escrevendo para output");
+                run_timer(&config, sound.as_mut(), time_interval)?;
+
+                current_sprint += 1;
             }
-            write(
-                config.out_interval.as_deref(),
-                &format!("Intervalo {}/{}", current_sprint, max_sprint),
-            )
-            .expect("Erro escrevendo para output");
-            run_timer(&config, sound.as_mut(), time_interval)?;
+        } else {
+            loop {
+                let timer = config.get_time()?;
+                write(
+                    config.out_interval.as_deref(),
+                    &format!("Sprint {}", current_sprint),
+                )
+                .expect("Erro escrevendo para output");
+                run_timer(&config, sound.as_mut(), timer)?;
 
-            current_sprint += 1;
+                let time_interval = config.get_time_interval();
+                if time_interval.is_zero() {
+                    break;
+                }
+                write(
+                    config.out_interval.as_deref(),
+                    &format!("Intervalo {}", current_sprint),
+                )
+                .expect("Erro escrevendo para output");
+                run_timer(&config, sound.as_mut(), time_interval)?;
+
+                current_sprint += 1;
+            }
         }
+
         Ok(())
     }
 }
