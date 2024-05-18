@@ -280,6 +280,12 @@ fn main() -> Result<(), &'static str> {
                 .expect("Erro escrevendo para output");
                 run_timer(&config, sound.as_mut(), time_interval)?;
 
+                println!("Aperte enter para iniciar próxima sprint");
+                let mut inputted_data = String::new();
+                std::io::stdin()
+                    .read_line(&mut inputted_data)
+                    .expect("Não foi possível ler de stdin");
+
                 current_sprint += 1;
             }
         }
