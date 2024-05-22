@@ -153,18 +153,19 @@ impl TimerConfig {
         }
 
         Timer {
-            seconds: self.interval_time.unwrap_or_else(|| {
+            seconds: 0,
+            minutes: self.interval_time.unwrap_or_else(|| {
                 println!("Quanto tempo de intervalo?");
-                let mut inputted_data = String::new();
-                std::io::stdin()
-                    .read_line(&mut inputted_data)
-                    .expect("Não foi possível ler de stdin");
-                inputted_data
-                    .trim()
-                    .parse()
-                    .expect("Não foi possível parsear numero digitado")
+                loop {
+                    let mut inputted_data = String::new();
+                    std::io::stdin()
+                        .read_line(&mut inputted_data)
+                        .expect("Não foi possível ler de stdin");
+                    if let Ok(num) = inputted_data.trim().parse() {
+                        return num;
+                    }
+                }
             }) as i32,
-            minutes: 0,
         }
     }
 
